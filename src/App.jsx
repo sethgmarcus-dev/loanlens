@@ -22,7 +22,6 @@ Be conservative with lending amounts. Return ONLY the JSON object.`;
 export default function LendingEstimator() {
   const [image, setImage] = useState(null);
   const [imageBase64, setImageBase64] = useState(null);
-  const [imageMime, setImageMime] = useState("image/jpeg");
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -33,11 +32,20 @@ export default function LendingEstimator() {
   const processFile = useCallback((file) => {
     if (!file || !file.type.startsWith("image/")) return;
     setImage(URL.createObjectURL(file));
-    setImageMime(file.type || "image/jpeg");
     setResult(null); setError(null);
-    const reader = new FileReader();
-    reader.onload = (e) => setImageBase64(e.target.result.split(",")[1]);
-    reader.readAsDataURL(file);
+
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      const maxSize = 1024;
+      let w = img.width, h = img.height;
+      if (w > h && w > maxSize) { h = h * maxSize / w; w = maxSize; }
+      else if (h > maxSize) { w = w * maxSize / h; h = maxSize; }
+      canvas.width = w; canvas.height = h;
+      canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+      setImageBase64(canvas.toDataURL("image/jpeg", 0.8).split(",")[1]);
+    };
+    img.src = URL.createObjectURL(file);
   }, []);
 
   const analyze = async () => {
@@ -51,7 +59,7 @@ export default function LendingEstimator() {
           model: "claude-sonnet-4-20250514", max_tokens: 1000,
           system: SYSTEM_PROMPT,
           messages: [{ role: "user", content: [
-            { type: "image", source: { type: "base64", media_type: imageMime, data: imageBase64 } },
+            { type: "image", source: { type: "base64", media_type: "image/jpeg", data: imageBase64 } },
             { type: "text", text: "Appraise this item for pawn lending." }
           ]}]
         }),
@@ -59,7 +67,9 @@ export default function LendingEstimator() {
       const data = await res.json();
       const text = (data.content || []).map(b => b.text || "").join("");
       setResult(JSON.parse(text.replace(/```json|```/g, "").trim()));
-    } catch { setError("Could not analyze. Try a clearer photo with better lighting."); }
+    } catch (err) {
+      setError("Could not analyze. Try a clearer photo with better lighting. Error: " + err.message);
+    }
     finally { setLoading(false); }
   };
 
@@ -117,7 +127,7 @@ export default function LendingEstimator() {
           {loading && <div style={{ textAlign:"center",marginTop:14,color:"#6b5a30",fontSize:13 }}>Analyzing brand, condition & market value...</div>}
         </>}
 
-        {error && <div style={{ background:"rgba(239,68,68,0.1)",border:"1px solid rgba(239,68,68,0.3)",borderRadius:12,padding:14,marginTop:10,color:"#ef4444",fontSize:14 }}>⚠️ {error}</div>}
+        {error && <div style={{ background:"rgba(239,68,68,0.1)",border:"1px solid rgba(239,68,68,0.3)",borderRadius:12,padding:14,marginTop:10,color:"#ef4444",fontSize:14 }}>{error}</div>}
 
         {result && <>
           <div style={{ borderRadius:16,overflow:"hidden",marginBottom:14,position:"relative" }}>
