@@ -19,6 +19,8 @@ condition must be one of: Excellent, Good, Fair, Poor
 confidence must be one of: High, Medium, Low
 Be conservative with lending amounts. Return ONLY the JSON object.`;
 
+const API_KEY = "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";
+
 export default function LendingEstimator() {
   const [image, setImage] = useState(null);
   const [imageBase64, setImageBase64] = useState(null);
@@ -53,23 +55,23 @@ export default function LendingEstimator() {
     setLoading(true); setError(null); setResult(null);
     try {
       const res = await fetch("/api/analyze", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-20250514", max_tokens: 1000,
-          system: SYSTEM_PROMPT,
-          messages: [{ role: "user", content: [
-            { type: "image", source: { type: "base64", media_type: "image/jpeg", data: imageBase64 } },
-            { type: "text", text: "Appraise this item for pawn lending." }
-          ]}]
-        }),
-      });
-      const text = await res.text();
-const data = JSON.parse(text);
-const content = (data.content || []).map(b => b.text || "").join("");
-setResult(JSON.parse(content.replace(/```json|```/g, "").trim()));
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    model: "claude-sonnet-4-20250514",
+    max_tokens: 1000,
+    system: SYSTEM_PROMPT,
+    messages: [{ role: "user", content: [
+      { type: "image", source: { type: "base64", media_type: "image/jpeg", data: imageBase64 } },
+      { type: "text", text: "Appraise this item for pawn lending." }
+    ]}]
+  }),
+});
+const data = await res.json();
+const text = (data.content || []).map(b => b.text || "").join("");
+setResult(JSON.parse(text.replace(/```json|```/g, "").trim()));
     } catch (err) {
-      setError("Could not analyze. Try a clearer photo with better lighting. Error: " + err.message);
+      setError("Error: " + err.message);
     }
     finally { setLoading(false); }
   };
