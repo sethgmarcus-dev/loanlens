@@ -64,9 +64,10 @@ export default function LendingEstimator() {
           ]}]
         }),
       });
-      const data = await res.json();
-      const text = (data.content || []).map(b => b.text || "").join("");
-      setResult(JSON.parse(text.replace(/```json|```/g, "").trim()));
+      const text = await res.text();
+const data = JSON.parse(text);
+const content = (data.content || []).map(b => b.text || "").join("");
+setResult(JSON.parse(content.replace(/```json|```/g, "").trim()));
     } catch (err) {
       setError("Could not analyze. Try a clearer photo with better lighting. Error: " + err.message);
     }
