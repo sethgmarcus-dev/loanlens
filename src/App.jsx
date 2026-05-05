@@ -1,8 +1,8 @@
 import { useState, useRef, useCallback } from "react";
 
-const SYSTEM_PROMPT = `You are an expert pawn shop appraiser with 20+ years of experience. When shown a photo of an item, identify it and provide a lending recommendation.
+const SYSTEM_PROMPT = `You are an expert pawn shop appraiser with 20+ years of experience. When shown a photo of an item, identify it and search the web for current prices on Chrono24 and eBay.
 
-Respond ONLY with a JSON object in this exact format (no markdown, no extra text):
+After searching, respond ONLY with a JSON object in this exact format (no markdown, no extra text):
 {
   "itemName": "Specific item name and description",
   "condition": "Excellent",
@@ -12,9 +12,14 @@ Respond ONLY with a JSON object in this exact format (no markdown, no extra text
   "lendPercent": 50,
   "confidence": "High",
   "reasoning": "Brief explanation of valuation",
-  "tips": "Tips for the employee such as check serial number, test functionality, look for damage"
+  "tips": "Tips for the employee such as check serial number, test functionality, look for damage",
+  "chrono24Price": 12500,
+  "ebayPrice": 10800,
+  "chrono24Found": true,
+  "ebayFound": true
 }
 
+For chrono24Price and ebayPrice, use the average sold/listed price you find. If not found on a platform, set the price to 0 and the Found field to false. For non-watch items, chrono24Found should be false and chrono24Price should be 0.
 condition must be one of: Excellent, Good, Fair, Poor
 confidence must be one of: High, Medium, Low
 Be conservative with lending amounts. Return ONLY the JSON object.`;
@@ -56,11 +61,12 @@ export default function LendingEstimator() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           model: "claude-sonnet-4-5",
-          max_tokens: 1000,
+          max_tokens: 4000,
           system: SYSTEM_PROMPT,
+          tools: [{ type: "web_search_20250305", name: "web_search" }],
           messages: [{ role: "user", content: [
             { type: "image", source: { type: "base64", media_type: "image/jpeg", data: imageBase64 } },
-            { type: "text", text: "Appraise this item for pawn lending." }
+            { type: "text", text: "Identify this item, search Chrono24 and eBay for current prices, then provide a lending recommendation." }
           ]}]
         }),
       });
@@ -68,8 +74,8 @@ export default function LendingEstimator() {
       let data;
       try { data = JSON.parse(rawText); }
       catch(e) { throw new Error("Server said: " + rawText.substring(0, 300)); }
-      const content = (data.content || []).map(b => b.text || "").join("");
-      setResult(JSON.parse(content.replace(/```json|```/g, "").trim()));
+      const textBlock = (data.content || []).filter(b => b.type === "text").map(b => b.text || "").join("");
+      setResult(JSON.parse(textBlock.replace(/```json|```/g, "").trim()));
     } catch (err) {
       setError("Error: " + err.message);
     }
@@ -111,17 +117,20 @@ export default function LendingEstimator() {
           <button style={S.goldBtn(false)} onClick={()=>cameraInputRef.current.click()}>📷 Take a Photo</button>
           <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" style={{ display:"none" }} onChange={e=>processFile(e.target.files[0])} />
         </>}
+
         {image && !result && <>
           <div style={{ borderRadius:16,overflow:"hidden",marginBottom:14,border:"1px solid #2a2010",position:"relative" }}>
             <img src={image} alt="item" style={{ width:"100%",display:"block",maxHeight:320,objectFit:"cover" }} />
             <button onClick={reset} style={{ position:"absolute",top:10,right:10,background:"rgba(0,0,0,0.7)",border:"none",color:"#fff",borderRadius:8,padding:"5px 10px",cursor:"pointer",fontSize:13 }}>✕ Retake</button>
           </div>
           <button style={S.goldBtn(loading)} onClick={analyze} disabled={loading}>
-            {loading ? "🔍 Appraising..." : "💰 Get Lending Value"}
+            {loading ? "🔍 Searching prices..." : "💰 Get Lending Value"}
           </button>
-          {loading && <div style={{ textAlign:"center",marginTop:14,color:"#6b5a30",fontSize:13 }}>Analyzing brand, condition & market value...</div>}
+          {loading && <div style={{ textAlign:"center",marginTop:14,color:"#6b5a30",fontSize:13 }}>Searching Chrono24 & eBay for current prices...</div>}
         </>}
+
         {error && <div style={{ background:"rgba(239,68,68,0.1)",border:"1px solid rgba(239,68,68,0.3)",borderRadius:12,padding:14,marginTop:10,color:"#ef4444",fontSize:14,wordBreak:"break-all" }}>{error}</div>}
+
         {result && <>
           <div style={{ borderRadius:16,overflow:"hidden",marginBottom:14,position:"relative" }}>
             <img src={image} alt="item" style={{ width:"100%",display:"block",maxHeight:220,objectFit:"cover" }} />
@@ -134,11 +143,37 @@ export default function LendingEstimator() {
               </div>
             </div>
           </div>
+
           <div style={{ background:"linear-gradient(135deg,#1a1206,#0f0c04)",border:"1px solid #d4a84344",borderRadius:16,padding:22,textAlign:"center",marginBottom:14,boxShadow:"0 8px 32px rgba(212,168,67,0.15)" }}>
             <div style={S.label}>Recommended Loan Amount</div>
             <div style={{ fontSize:52,fontWeight:"bold",color:"#d4a843",lineHeight:1,textShadow:"0 0 40px rgba(212,168,67,0.4)" }}>${result.lendAmount?.toLocaleString()}</div>
             <div style={{ fontSize:12,color:"#6b5a30",marginTop:6 }}>{result.lendPercent}% of resale value</div>
           </div>
+
+          {/* Market Prices */}
+          <div style={S.card}>
+            <div style={S.label}>Live Market Prices</div>
+            <div style={{ display:"flex",gap:10 }}>
+              {result.chrono24Found && (
+                <div style={{ flex:1,background:"#0a0a0f",borderRadius:12,padding:14,textAlign:"center",border:"1px solid #1a1206" }}>
+                  <div style={{ fontSize:11,color:"#6b5a30",marginBottom:6 }}>CHRONO24</div>
+                  <div style={{ fontSize:20,fontWeight:"bold",color:"#d4a843" }}>${result.chrono24Price?.toLocaleString()}</div>
+                  <div style={{ fontSize:10,color:"#4a3d1e",marginTop:3 }}>avg listing</div>
+                </div>
+              )}
+              {result.ebayFound && (
+                <div style={{ flex:1,background:"#0a0a0f",borderRadius:12,padding:14,textAlign:"center",border:"1px solid #1a1206" }}>
+                  <div style={{ fontSize:11,color:"#6b5a30",marginBottom:6 }}>EBAY</div>
+                  <div style={{ fontSize:20,fontWeight:"bold",color:"#d4a843" }}>${result.ebayPrice?.toLocaleString()}</div>
+                  <div style={{ fontSize:10,color:"#4a3d1e",marginTop:3 }}>avg sold</div>
+                </div>
+              )}
+              {!result.chrono24Found && !result.ebayFound && (
+                <div style={{ color:"#6b5a30",fontSize:13 }}>No market data found</div>
+              )}
+            </div>
+          </div>
+
           <div style={S.card}>
             <div style={S.label}>Value Breakdown</div>
             {[["Retail / New Value",result.retailValue,"#e8e0d0",false],["Current Resale Value",result.resaleValue,"#c8b87a",false],["Loan Amount",result.lendAmount,"#d4a843",true]].map(([label,val,color,bold])=>(
@@ -148,14 +183,17 @@ export default function LendingEstimator() {
               </div>
             ))}
           </div>
+
           <div style={S.card}>
             <div style={S.label}>Appraisal Notes</div>
             <div style={{ fontSize:14,color:"#c8b87a",lineHeight:1.6 }}>{result.reasoning}</div>
           </div>
+
           {result.tips && <div style={{ background:"rgba(212,168,67,0.06)",border:"1px solid rgba(212,168,67,0.2)",borderRadius:16,padding:18,marginBottom:18 }}>
             <div style={{ fontSize:11,color:"#d4a843",textTransform:"uppercase",letterSpacing:2,marginBottom:10 }}>⚡ Employee Checklist</div>
             <div style={{ fontSize:14,color:"#c8b87a",lineHeight:1.6 }}>{result.tips}</div>
           </div>}
+
           <button style={S.ghostBtn} onClick={reset}>+ Appraise Another Item</button>
         </>}
       </div>
