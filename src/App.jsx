@@ -61,10 +61,9 @@ export default function LendingEstimator() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           model: "claude-sonnet-4-5",
-          max_tokens: 4000,
+          max_tokens: 1000,
           system: SYSTEM_PROMPT,
-          tools: [{ type: "web_search_20250305", name: "web_search" }],
-          messages: [{ role: "user", content: [
+                    messages: [{ role: "user", content: [
             { type: "image", source: { type: "base64", media_type: "image/jpeg", data: imageBase64 } },
             { type: "text", text: "Identify this item, search Chrono24 and eBay for current prices, then provide a lending recommendation." }
           ]}]
