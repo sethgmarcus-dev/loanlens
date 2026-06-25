@@ -24,10 +24,25 @@ condition must be one of: Excellent, Good, Fair, Poor
 confidence must be one of: High, Medium, Low
 Be conservative with lending amounts. Return ONLY the JSON object.`;
 
+const LISTING_PROMPT = `You write resale listings for a South Florida luxury pawn and resale shop. Items are pre-owned luxury watches, fine jewelry, diamonds, and designer handbags. From the photo (and any staff details), write a listing TITLE and a detailed DESCRIPTION ready to paste into eBay and Shopify.
+
+TITLE: 80 characters or fewer (eBay caps titles at 80). Lead with brand, then model/line, then the keywords a buyer searches (metal, material, color, size, key feature). No ALL CAPS, no emojis, no quotation marks.
+
+DESCRIPTION: detailed but honest, about 120-200 words. Open with one or two selling sentences, then a spec list (one per line, plain hyphen bullets), then a short closing line. Mark the piece as pre-owned/authentic. Only state facts visible in the photo or provided by staff. NEVER invent serial numbers, reference numbers, carat weights, model numbers, or measurements. If a key spec isn't known, write [verify] so staff can fill it in.
+
+Format your reply EXACTLY like this, with nothing before or after:
+TITLE: <the title on a single line>
+DESCRIPTION:
+<the full description, which may span multiple lines>`;
+
 export default function LendingEstimator() {
+  const [mode, setMode] = useState("appraise"); // "appraise" | "listing"
   const [image, setImage] = useState(null);
   const [imageBase64, setImageBase64] = useState(null);
   const [result, setResult] = useState(null);
+  const [listing, setListing] = useState(null);
+  const [notes, setNotes] = useState("");
+  const [copied, setCopied] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [dragOver, setDragOver] = useState(false);
@@ -37,7 +52,7 @@ export default function LendingEstimator() {
   const processFile = useCallback((file) => {
     if (!file || !file.type.startsWith("image/")) return;
     setImage(URL.createObjectURL(file));
-    setResult(null); setError(null);
+    setResult(null); setListing(null); setError(null);
     const img = new Image();
     img.onload = () => {
       const canvas = document.createElement("canvas");
@@ -63,7 +78,7 @@ export default function LendingEstimator() {
           model: "claude-sonnet-4-5",
           max_tokens: 1000,
           system: SYSTEM_PROMPT,
-                    messages: [{ role: "user", content: [
+          messages: [{ role: "user", content: [
             { type: "image", source: { type: "base64", media_type: "image/jpeg", data: imageBase64 } },
             { type: "text", text: "Identify this item, search Chrono24 and eBay for current prices, then provide a lending recommendation." }
           ]}]
@@ -81,7 +96,59 @@ export default function LendingEstimator() {
     finally { setLoading(false); }
   };
 
-  const reset = () => { setImage(null); setImageBase64(null); setResult(null); setError(null); };
+  const writeListing = async () => {
+    if (!imageBase64) return;
+    setLoading(true); setError(null); setListing(null);
+    try {
+      const res = await fetch("/api/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-5",
+          max_tokens: 1200,
+          system: LISTING_PROMPT,
+          messages: [{ role: "user", content: [
+            { type: "image", source: { type: "base64", media_type: "image/jpeg", data: imageBase64 } },
+            { type: "text", text: notes.trim() ? ("Staff details: " + notes.trim()) : "Write the listing title and description for this item." }
+          ]}]
+        }),
+      });
+      const rawText = await res.text();
+      let data;
+      try { data = JSON.parse(rawText); }
+      catch(e) { throw new Error("Server said: " + rawText.substring(0, 300)); }
+      const text = (data.content || []).filter(b => b.type === "text").map(b => b.text || "").join("\n").trim();
+      if (!text) throw new Error("No listing text returned. Try again.");
+      const tIdx = text.search(/TITLE:/i);
+      const dIdx = text.search(/DESCRIPTION:/i);
+      let title = "", description = "";
+      if (tIdx !== -1 && dIdx !== -1 && dIdx > tIdx) {
+        title = text.slice(tIdx + 6, dIdx).trim();
+        description = text.slice(dIdx + 12).trim();
+      } else {
+        const lines = text.split("\n");
+        title = lines[0].replace(/^TITLE:/i, "").trim();
+        description = lines.slice(1).join("\n").replace(/^DESCRIPTION:/i, "").trim();
+      }
+      setListing({ title, description });
+    } catch (err) {
+      setError("Error: " + err.message);
+    }
+    finally { setLoading(false); }
+  };
+
+  const copy = async (field, val) => {
+    try {
+      await navigator.clipboard.writeText(val);
+      setCopied(field);
+      setTimeout(() => setCopied(""), 1500);
+    } catch {
+      setError("Couldn't copy — select the text and copy manually.");
+    }
+  };
+
+  const switchMode = (m) => { setMode(m); setResult(null); setListing(null); setError(null); };
+  const reset = () => { setImage(null); setImageBase64(null); setResult(null); setListing(null); setNotes(""); setError(null); };
   const cColor = c => ({ Excellent:"#22c55e",Good:"#84cc16",Fair:"#f59e0b",Poor:"#ef4444" }[c]||"#888");
   const cfColor = c => ({ High:"#22c55e",Medium:"#f59e0b",Low:"#ef4444" }[c]||"#888");
 
@@ -94,7 +161,12 @@ export default function LendingEstimator() {
     ghostBtn: { width:"100%",padding:15,background:"transparent",border:"1px solid #2a2010",borderRadius:12,color:"#6b5a30",fontSize:15,cursor:"pointer" },
     card: { background:"#111108",border:"1px solid #2a2010",borderRadius:16,padding:18,marginBottom:14 },
     label: { fontSize:11,color:"#6b5a30",textTransform:"uppercase",letterSpacing:2,marginBottom:10 },
+    seg: (active) => ({ flex:1,padding:"11px 8px",borderRadius:10,border:`1px solid ${active?"#d4a84366":"#2a2010"}`,background:active?"linear-gradient(135deg,#d4a843,#8b6914)":"transparent",color:active?"#0a0a0f":"#6b5a30",fontWeight:active?"bold":"normal",fontSize:14,cursor:"pointer" }),
+    copyBtn: (done) => ({ background:done?"linear-gradient(135deg,#d4a843,#8b6914)":"transparent",border:"1px solid #d4a84366",color:done?"#0a0a0f":"#d4a843",borderRadius:8,padding:"6px 14px",fontSize:13,fontWeight:"bold",cursor:"pointer" }),
+    notes: { width:"100%",background:"#0a0a0f",border:"1px solid #2a2010",borderRadius:12,color:"#e8e0d0",padding:"10px 12px",fontSize:14,fontFamily:"Georgia,serif",resize:"none",marginBottom:12 },
   };
+
+  const activeResult = mode === "appraise" ? result : listing;
 
   return (
     <div style={S.page}>
@@ -102,10 +174,16 @@ export default function LendingEstimator() {
         <div style={S.logo}>💰</div>
         <div>
           <div style={{ fontSize:19,fontWeight:"bold",color:"#d4a843",letterSpacing:1 }}>LoanLens</div>
-          <div style={{ fontSize:10,color:"#6b5a30",textTransform:"uppercase",letterSpacing:2 }}>Instant Item Appraisal</div>
+          <div style={{ fontSize:10,color:"#6b5a30",textTransform:"uppercase",letterSpacing:2 }}>Appraise &amp; List Items</div>
         </div>
       </div>
       <div style={S.body}>
+
+        <div style={{ display:"flex",gap:8,marginBottom:16 }}>
+          <button style={S.seg(mode==="appraise")} onClick={()=>switchMode("appraise")}>💰 Loan Value</button>
+          <button style={S.seg(mode==="listing")} onClick={()=>switchMode("listing")}>📝 Write Listing</button>
+        </div>
+
         {!image && <>
           <div onDragOver={e=>{e.preventDefault();setDragOver(true)}} onDragLeave={()=>setDragOver(false)} onDrop={e=>{e.preventDefault();setDragOver(false);processFile(e.dataTransfer.files[0])}} onClick={()=>fileInputRef.current.click()} style={{ border:`2px dashed ${dragOver?"#d4a843":"#2a2010"}`,borderRadius:16,padding:"48px 20px",textAlign:"center",cursor:"pointer",background:dragOver?"rgba(212,168,67,0.05)":"rgba(255,255,255,0.02)",marginBottom:12 }}>
             <div style={{ fontSize:44,marginBottom:10 }}>📸</div>
@@ -117,20 +195,27 @@ export default function LendingEstimator() {
           <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" style={{ display:"none" }} onChange={e=>processFile(e.target.files[0])} />
         </>}
 
-        {image && !result && <>
+        {image && !activeResult && <>
           <div style={{ borderRadius:16,overflow:"hidden",marginBottom:14,border:"1px solid #2a2010",position:"relative" }}>
             <img src={image} alt="item" style={{ width:"100%",display:"block",maxHeight:320,objectFit:"cover" }} />
             <button onClick={reset} style={{ position:"absolute",top:10,right:10,background:"rgba(0,0,0,0.7)",border:"none",color:"#fff",borderRadius:8,padding:"5px 10px",cursor:"pointer",fontSize:13 }}>✕ Retake</button>
           </div>
-          <button style={S.goldBtn(loading)} onClick={analyze} disabled={loading}>
-            {loading ? "🔍 Searching prices..." : "💰 Get Lending Value"}
+
+          {mode==="listing" && (
+            <textarea value={notes} onChange={e=>setNotes(e.target.value)} rows={2} placeholder="Optional: details the photo doesn't show — e.g. 42mm, box & papers, light wear" style={S.notes} />
+          )}
+
+          <button style={S.goldBtn(loading)} onClick={mode==="appraise"?analyze:writeListing} disabled={loading}>
+            {loading
+              ? (mode==="appraise" ? "🔍 Searching prices..." : "📝 Writing listing...")
+              : (mode==="appraise" ? "💰 Get Lending Value" : "📝 Write Listing")}
           </button>
-          {loading && <div style={{ textAlign:"center",marginTop:14,color:"#6b5a30",fontSize:13 }}>Searching Chrono24 & eBay for current prices...</div>}
+          {loading && mode==="appraise" && <div style={{ textAlign:"center",marginTop:14,color:"#6b5a30",fontSize:13 }}>Searching Chrono24 &amp; eBay for current prices...</div>}
         </>}
 
         {error && <div style={{ background:"rgba(239,68,68,0.1)",border:"1px solid rgba(239,68,68,0.3)",borderRadius:12,padding:14,marginTop:10,color:"#ef4444",fontSize:14,wordBreak:"break-all" }}>{error}</div>}
 
-        {result && <>
+        {mode==="appraise" && result && <>
           <div style={{ borderRadius:16,overflow:"hidden",marginBottom:14,position:"relative" }}>
             <img src={image} alt="item" style={{ width:"100%",display:"block",maxHeight:220,objectFit:"cover" }} />
             <div style={{ position:"absolute",bottom:0,left:0,right:0,background:"linear-gradient(transparent,rgba(0,0,0,0.9))",padding:"28px 14px 12px" }}>
@@ -149,7 +234,6 @@ export default function LendingEstimator() {
             <div style={{ fontSize:12,color:"#6b5a30",marginTop:6 }}>{result.lendPercent}% of resale value</div>
           </div>
 
-          {/* Market Prices */}
           <div style={S.card}>
             <div style={S.label}>Live Market Prices</div>
             <div style={{ display:"flex",gap:10 }}>
@@ -194,6 +278,33 @@ export default function LendingEstimator() {
           </div>}
 
           <button style={S.ghostBtn} onClick={reset}>+ Appraise Another Item</button>
+        </>}
+
+        {mode==="listing" && listing && <>
+          <div style={{ borderRadius:16,overflow:"hidden",marginBottom:14,border:"1px solid #2a2010" }}>
+            <img src={image} alt="item" style={{ width:"100%",display:"block",maxHeight:200,objectFit:"cover" }} />
+          </div>
+
+          <div style={S.card}>
+            <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10 }}>
+              <div style={{ ...S.label,marginBottom:0 }}>Listing Title</div>
+              <button style={S.copyBtn(copied==="title")} onClick={()=>copy("title",listing.title)}>{copied==="title"?"Copied":"Copy"}</button>
+            </div>
+            <div style={{ fontSize:15,color:"#e8e0d0",lineHeight:1.5 }}>{listing.title}</div>
+            <div style={{ fontSize:11,color:"#4a3d1e",marginTop:8 }}>{listing.title.length}/80 characters</div>
+          </div>
+
+          <div style={S.card}>
+            <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10 }}>
+              <div style={{ ...S.label,marginBottom:0 }}>Description</div>
+              <button style={S.copyBtn(copied==="desc")} onClick={()=>copy("desc",listing.description)}>{copied==="desc"?"Copied":"Copy"}</button>
+            </div>
+            <div style={{ fontSize:14,color:"#c8b87a",lineHeight:1.6,whiteSpace:"pre-wrap" }}>{listing.description}</div>
+          </div>
+
+          <div style={{ textAlign:"center",fontSize:11,color:"#4a3d1e",marginBottom:14 }}>Double-check brand, model, and any [verify] specs before publishing.</div>
+
+          <button style={S.ghostBtn} onClick={reset}>+ List Another Item</button>
         </>}
       </div>
       <style>{"* { box-sizing: border-box; }"}</style>
